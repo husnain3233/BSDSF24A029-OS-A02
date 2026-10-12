@@ -1,11 +1,6 @@
 /*
-* Programming Assignment 02: lsv1.0.0
-* This is the source file of version 1.0.0
-* Read the write-up of the assignment to add the features to this base version
-* Usage:
-*       $ lsv1.0.0 
-*       % lsv1.0.0  /home
-*       $ lsv1.0.0  /home/kali/   /etc/
+* Programming Assignment 02: ls-v1.1.0
+* Adds -l (long listing format) to the base version.
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,32 +8,60 @@
 #include <dirent.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 #include <sys/stat.h>
+#include <pwd.h>
+#include <grp.h>
+#include <time.h>
 
-extern int errno;
+void do_ls(const char *dir, int long_flag);
+void do_ls_long(const char *dir);
+void mode_to_string(mode_t mode, char *str);
+void get_user(uid_t uid, char *buf, size_t n);
+void get_group(gid_t gid, char *buf, size_t n);
 
-void do_ls(const char *dir);
-
-int main(int argc, char const *argv[])
+int main(int argc, char *argv[])
 {
-    if (argc == 1)
+    int opt;
+    int long_flag = 0;
+
+    while ((opt = getopt(argc, argv, "l")) != -1)
     {
-        do_ls(".");
+        switch (opt)
+        {
+            case 'l':
+                long_flag = 1;
+                break;
+            default:
+                fprintf(stderr, "Usage: %s [-l] [dir...]\n", argv[0]);
+                return 1;
+        }
+    }
+
+    if (optind == argc)
+    {
+        do_ls(".", long_flag);
     }
     else
     {
-        for (int i = 1; i < argc; i++)
+        for (int i = optind; i < argc; i++)
         {
             printf("Directory listing of %s : \n", argv[i]);
-            do_ls(argv[i]);
-	    puts("");
+            do_ls(argv[i], long_flag);
+            puts("");
         }
     }
     return 0;
 }
 
-void do_ls(const char *dir)
+void do_ls(const char *dir, int long_flag)
 {
+    if (long_flag)
+    {
+        do_ls_long(dir);
+        return;
+    }
+
     struct dirent *entry;
     DIR *dp = opendir(dir);
     if (dp == NULL)
@@ -53,10 +76,156 @@ void do_ls(const char *dir)
             continue;
         printf("%s\n", entry->d_name);
     }
-
     if (errno != 0)
-    {
         perror("readdir failed");
+
+    closedir(dp);
+}
+
+/* Convert st_mode into a string like "drwxr-xr-x" */
+void mode_to_string(mode_t mode, char *str)
+{
+    /* file type */
+    if (S_ISREG(mode))       str[0] = '-';
+    else if (S_ISDIR(mode))  str[0] = 'd';
+    else if (S_ISLNK(mode))  str[0] = 'l';
+    else if (S_ISCHR(mode))  str[0] = 'c';
+    else if (S_ISBLK(mode))  str[0] = 'b';
+    else if (S_ISFIFO(mode)) str[0] = 'p';
+    else if (S_ISSOCK(mode)) str[0] = 's';
+    else                     str[0] = '?';
+
+    /* owner */
+    str[1] = (mode & S_IRUSR) ? 'r' : '-';
+    str[2] = (mode & S_IWUSR) ? 'w' : '-';
+    if (mode & S_ISUID)
+        str[3] = (mode & S_IXUSR) ? 's' : 'S';
+    else
+        str[3] = (mode & S_IXUSR) ? 'x' : '-';
+
+    /* group */
+    str[4] = (mode & S_IRGRP) ? 'r' : '-';
+    str[5] = (mode & S_IWGRP) ? 'w' : '-';
+    if (mode & S_ISGID)
+        str[6] = (mode & S_IXGRP) ? 's' : 'S';
+    else
+        str[6] = (mode & S_IXGRP) ? 'x' : '-';
+
+    /* others */
+    str[7] = (mode & S_IROTH) ? 'r' : '-';
+    str[8] = (mode & S_IWOTH) ? 'w' : '-';
+    if (mode & S_ISVTX)
+        str[9] = (mode & S_IXOTH) ? 't' : 'T';
+    else
+        str[9] = (mode & S_IXOTH) ? 'x' : '-';
+
+    str[10] = '\0';
+}
+
+void get_user(uid_t uid, char *buf, size_t n)
+{
+    struct passwd *pw = getpwuid(uid);
+    if (pw)
+        snprintf(buf, n, "%s", pw->pw_name);
+    else
+        snprintf(buf, n, "%u", (unsigned)uid);
+}
+
+void get_group(gid_t gid, char *buf, size_t n)
+{
+    struct group *gr = getgrgid(gid);
+    if (gr)
+        snprintf(buf, n, "%s", gr->gr_name);
+    else
+        snprintf(buf, n, "%u", (unsigned)gid);
+}
+
+void do_ls_long(const char *dir)
+{
+    DIR *dp = opendir(dir);
+    if (dp == NULL)
+    {
+        fprintf(stderr, "Cannot open directory : %s\n", dir);
+        return;
+    }
+
+    struct dirent *entry;
+    struct stat st;
+    char path[PATH_MAX];
+    char user[64], group[64];
+    int w_link = 1, w_user = 1, w_group = 1, w_size = 1;
+    long long total_blocks = 0;
+
+    /* PASS 1: find the widest value in each column and the block total */
+    while ((entry = readdir(dp)) != NULL)
+    {
+        if (entry->d_name[0] == '.')
+            continue;
+        snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+        if (lstat(path, &st) == -1)
+        {
+            perror(path);
+            continue;
+        }
+        char tmp[64];
+        int len;
+
+        len = snprintf(tmp, sizeof(tmp), "%lu", (unsigned long)st.st_nlink);
+        if (len > w_link) w_link = len;
+        get_user(st.st_uid, user, sizeof(user));
+        len = strlen(user);
+        if (len > w_user) w_user = len;
+        get_group(st.st_gid, group, sizeof(group));
+        len = strlen(group);
+        if (len > w_group) w_group = len;
+        len = snprintf(tmp, sizeof(tmp), "%lld", (long long)st.st_size);
+        if (len > w_size) w_size = len;
+
+        total_blocks += st.st_blocks;
+    }
+
+    /* st_blocks counts 512-byte units; ls prints 1K units */
+    printf("total %lld\n", total_blocks / 2);
+
+    /* PASS 2: print every entry */
+    rewinddir(dp);
+    while ((entry = readdir(dp)) != NULL)
+    {
+        if (entry->d_name[0] == '.')
+            continue;
+        snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+        if (lstat(path, &st) == -1)
+            continue;
+
+        char perms[11];
+        mode_to_string(st.st_mode, perms);
+        get_user(st.st_uid, user, sizeof(user));
+        get_group(st.st_gid, group, sizeof(group));
+
+        time_t mtime = st.st_mtime;
+        char *timestr = ctime(&mtime);   /* "Mon Oct 12 10:12:00 2026\n" */
+
+        printf("%s %*lu %-*s %-*s %*lld %.12s %s",
+               perms,
+               w_link, (unsigned long)st.st_nlink,
+               w_user, user,
+               w_group, group,
+               w_size, (long long)st.st_size,
+               timestr + 4,              /* skip day name, keep "Oct 12 10:12" */
+               entry->d_name);
+
+        /* for symlinks, ls shows "name -> target" */
+        if (S_ISLNK(st.st_mode))
+        {
+            char target[PATH_MAX];
+            ssize_t n = readlink(path, target, sizeof(target) - 1);
+            if (n != -1)
+            {
+                target[n] = '\0';
+                printf(" -> %s", target);
+            }
+        }
+        putchar('\n');
     }
 
     closedir(dp);
