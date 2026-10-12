@@ -2,38 +2,39 @@
 
 ## Feature 2: ls-v1.1.0 (Long Listing)
 
-### Q1. What is the difference between stat() and lstat()? When is lstat() more appropriate in ls?
+### Q1. Difference between stat() and lstat()? When to use lstat() in ls?
 
-Both system calls fill a `struct stat` with a file's metadata (type, permissions, owner, size, timestamps). The difference is how they treat symbolic links:
+Both give information about a file (size, owner, permissions, time).
 
-- `stat()` follows the symlink and returns information about the file the link points to (the target).
-- `lstat()` does not follow it and returns information about the symlink itself.
+- stat() follows a symbolic link and gives info about the file it points to.
+- lstat() does not follow it. It gives info about the link itself.
 
-`ls -l` should use `lstat()` because the long listing has to describe the entry that is actually in the directory. For a symlink, `lstat()` gives:
-- file type `l` (so `S_ISLNK()` is true), whereas `stat()` would report the target's type, such as `-` or `d`;
-- the link's own size, which is the length of the target path;
-- the link's own permissions and timestamps.
+ls -l should use lstat() because it must show the link itself (type "l" and "name -> target"), not the file it points to.
 
-This lets `ls -l` print `name -> target`. A second reason is that `stat()` fails on a dangling (broken) symlink because the target does not exist, while `lstat()` still works. In a recursive listing, `lstat()` also stops the program from following a link to a directory and looping forever. `stat()` is the right choice only when the target's information is wanted, for example `ls -L`.
+### Q2. How do we get file type and permissions from st_mode?
 
-### Q2. How can bitwise operators and macros extract file type and permissions from st_mode?
+st_mode is one number that stores both the file type and the permissions as bits. We use the & operator to check one part at a time.
 
-`st_mode` is an integer in which different bit groups mean different things:
+- File type: (st_mode & S_IFMT) == S_IFDIR checks for a directory. S_ISDIR(st_mode) does the same thing.
+- Permission: if (st_mode & S_IRUSR) is true, the owner has read permission.
 
-- The high bits (mask `S_IFMT`, octal 0170000) hold the file type.
-- The next 3 bits are the special bits: setuid (`S_ISUID`), setgid (`S_ISGID`) and sticky (`S_ISVTX`).
-- The lowest 9 bits are the permissions for owner, group and others (`S_IRUSR`, `S_IWUSR`, `S_IXUSR`, `S_IRGRP`, and so on).
+My mode_to_string() function checks all 9 permission bits like this and builds a string such as drwxr-xr-x.
 
-The bitwise AND operator (`&`) works as a mask. It keeps the bits we ask about and clears all the others.
+## Feature 3: ls-v1.2.0 (Column Display)
 
-File type: first mask with `S_IFMT`, then compare:
+### Q1. Logic of "down then across" printing? Why is one loop not enough?
 
-    if ((st.st_mode & S_IFMT) == S_IFDIR)   /* it is a directory */
+First I store all names in an array and find the longest name. Then:
+- column width = longest name + 2
+- columns = terminal width / column width
+- rows = total names / columns (rounded up)
 
-The `S_ISDIR(mode)` macro does exactly this. Masking first is necessary because the type is a multi-bit value. Testing `mode & S_IFDIR` alone would also be true for block devices, since their code shares a bit with the directory code.
+I print row by row. The name at row r and column c is names[r + c * rows]. So the names go down each column first.
 
-Permissions: each permission is one bit, so a single AND tells us if it is set:
+One simple loop only prints names in order, one after another. But the screen prints one line at a time, so one line needs names from different places in the array. That needs a loop inside a loop.
 
-    if (st.st_mode & S_IRUSR)   /* owner has read permission */
+### Q2. Purpose of ioctl? Problem with fixed 80 columns?
 
-If the result is non-zero, the bit is set. My `mode_to_string()` function repeats this check for all 9 permission bits to build a string such as `drwxr-xr-x`. For the execute positions it also checks `S_ISUID`, `S_ISGID` and `S_ISVTX` and shows `s`/`S` or `t`/`T` when the special bits are set.
+ioctl with TIOCGWINSZ asks the terminal for its current width, so the output fits the screen.
+
+With a fixed 80 columns, a wide terminal wastes space and a small terminal breaks the layout. It also does not change when the user resizes the window.
