@@ -1,6 +1,7 @@
 /*
-* Programming Assignment 02: ls-v1.1.0
-* Adds -l (long listing format) to the base version.
+* Programming Assignment 02: ls-v1.2.0
+* v1.1.0: -l long listing format
+* v1.2.0: default column display (down then across)
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <pwd.h>
 #include <grp.h>
 #include <time.h>
@@ -19,6 +21,8 @@ void do_ls_long(const char *dir);
 void mode_to_string(mode_t mode, char *str);
 void get_user(uid_t uid, char *buf, size_t n);
 void get_group(gid_t gid, char *buf, size_t n);
+int get_term_width(void);
+void print_columns(char **names, size_t count, size_t maxlen);
 
 int main(int argc, char *argv[])
 {
@@ -54,6 +58,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+/* Default display: read all names, then print in columns */
 void do_ls(const char *dir, int long_flag)
 {
     if (long_flag)
@@ -62,24 +67,93 @@ void do_ls(const char *dir, int long_flag)
         return;
     }
 
-    struct dirent *entry;
     DIR *dp = opendir(dir);
     if (dp == NULL)
     {
         fprintf(stderr, "Cannot open directory : %s\n", dir);
         return;
     }
+
+    char **names = NULL;
+    size_t count = 0, capacity = 0, maxlen = 0;
+    struct dirent *entry;
+
     errno = 0;
     while ((entry = readdir(dp)) != NULL)
     {
         if (entry->d_name[0] == '.')
             continue;
-        printf("%s\n", entry->d_name);
+
+        if (count == capacity)
+        {
+            capacity = capacity ? capacity * 2 : 64;
+            char **tmp = realloc(names, capacity * sizeof(char *));
+            if (tmp == NULL)
+            {
+                perror("realloc");
+                break;
+            }
+            names = tmp;
+        }
+        names[count] = strdup(entry->d_name);
+        if (names[count] == NULL)
+        {
+            perror("strdup");
+            break;
+        }
+        size_t len = strlen(entry->d_name);
+        if (len > maxlen)
+            maxlen = len;
+        count++;
     }
     if (errno != 0)
         perror("readdir failed");
-
     closedir(dp);
+
+    print_columns(names, count, maxlen);
+
+    for (size_t i = 0; i < count; i++)
+        free(names[i]);
+    free(names);
+}
+
+/* Ask the terminal for its width; use 80 if that fails */
+int get_term_width(void)
+{
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
+        return 80;
+    return ws.ws_col;
+}
+
+/* Print names "down then across" */
+void print_columns(char **names, size_t count, size_t maxlen)
+{
+    if (count == 0)
+        return;
+
+    size_t col_width = maxlen + 2;
+    size_t cols = get_term_width() / col_width;
+    if (cols < 1)
+        cols = 1;
+    if (cols > count)
+        cols = count;
+    size_t rows = (count + cols - 1) / cols;   /* ceiling division */
+
+    for (size_t r = 0; r < rows; r++)
+    {
+        for (size_t c = 0; c < cols; c++)
+        {
+            size_t idx = r + c * rows;
+            if (idx >= count)
+                break;
+            if (c < cols - 1 && idx + rows < count)
+                printf("%-*s", (int)col_width, names[idx]);
+            else
+                printf("%s", names[idx]);
+        }
+        putchar('\n');
+    }
 }
 
 /* Convert st_mode into a string like "drwxr-xr-x" */
@@ -140,6 +214,7 @@ void get_group(gid_t gid, char *buf, size_t n)
         snprintf(buf, n, "%u", (unsigned)gid);
 }
 
+/* Long listing (-l) */
 void do_ls_long(const char *dir)
 {
     DIR *dp = opendir(dir);
