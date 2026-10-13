@@ -48,3 +48,17 @@ The vertical ("down then across") one is more complex. It must first calculate t
 ### Q2. How did you manage the display modes (-l, -x, default)?
 
 I used one integer variable called mode with three values: MODE_DEFAULT, MODE_LONG and MODE_HORIZ. getopt() sets it in main. Then do_ls() checks it: if MODE_LONG it calls do_ls_long(), if MODE_HORIZ it calls print_horizontal(), otherwise it calls print_columns().
+
+## Feature 5: ls-v1.4.0 (Alphabetical Sort)
+
+### Q1. Why read all entries into memory before sorting? Drawbacks for huge directories?
+
+readdir() gives names one at a time in no fixed order. To sort, the program must see all names first, because the first name in sorted order could be the last one read. So I store them all in an array and then sort it.
+
+The drawback is memory and time. A directory with millions of files needs a lot of memory to hold all the names, and nothing can be printed until all of them are read and sorted.
+
+### Q2. Purpose and signature of the qsort() comparison function? Why const void *?
+
+qsort() does not know the type of the data, so it needs a function that tells it which of two elements comes first. The signature is int cmp(const void *a, const void *b). It returns a negative number if a comes first, 0 if they are equal, and a positive number if b comes first.
+
+qsort() works on any type, so it passes generic pointers (const void *). Inside my function I cast them to char ** (each array element is a char *), get the strings, and return strcmp(x, y). The const means the function must not change the data.
