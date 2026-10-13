@@ -38,3 +38,13 @@ One simple loop only prints names in order, one after another. But the screen pr
 ioctl with TIOCGWINSZ asks the terminal for its current width, so the output fits the screen.
 
 With a fixed 80 columns, a wide terminal wastes space and a small terminal breaks the layout. It also does not change when the user resizes the window.
+
+## Feature 4: ls-v1.3.0 (Horizontal Display -x)
+
+### Q1. Which is more complex, vertical or horizontal printing? Which needs more pre-calculation?
+
+The vertical ("down then across") one is more complex. It must first calculate the number of columns and rows, and then find each name with names[r + c * rows]. The horizontal one needs only the column width. It prints names one by one and starts a new line when the next name does not fit in the terminal width.
+
+### Q2. How did you manage the display modes (-l, -x, default)?
+
+I used one integer variable called mode with three values: MODE_DEFAULT, MODE_LONG and MODE_HORIZ. getopt() sets it in main. Then do_ls() checks it: if MODE_LONG it calls do_ls_long(), if MODE_HORIZ it calls print_horizontal(), otherwise it calls print_columns().
