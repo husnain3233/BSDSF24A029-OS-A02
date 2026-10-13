@@ -78,3 +78,17 @@ There are three execute bits: S_IXUSR (owner), S_IXGRP (group) and S_IXOTH (othe
 if (mode & (S_IXUSR | S_IXGRP | S_IXOTH))
 
 If any one of them is set, the file is executable by someone, so I print it in green.
+
+## Feature 7: ls-v1.6.0 (Recursive Listing -R)
+
+### Q1. What is a base case? What is the base case in your recursive ls?
+
+The base case is the condition where a recursive function stops calling itself. Without it the function would call itself forever.
+
+In my ls, the base case is a directory that has no subdirectories (or one that cannot be opened). The loop that looks for subdirectories finds nothing to recurse into, so do_ls() just returns to the caller. Names starting with . (including . and ..) are skipped, so the program never goes back into the same or the parent directory.
+
+### Q2. Why build the full path before the recursive call? What if we call do_ls("subdir")?
+
+opendir() and lstat() use paths relative to the current working directory of the program, not relative to the directory being listed. The name "subdir" alone is just a name inside parent_dir. If I call do_ls("subdir"), the program looks for "subdir" in the directory where it was started, so it would fail with "Cannot open directory" or list a wrong directory with the same name.
+
+Building "parent_dir/subdir" gives a path that is correct from the starting directory, so every level finds the right folder.
