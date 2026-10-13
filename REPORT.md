@@ -62,3 +62,19 @@ The drawback is memory and time. A directory with millions of files needs a lot 
 qsort() does not know the type of the data, so it needs a function that tells it which of two elements comes first. The signature is int cmp(const void *a, const void *b). It returns a negative number if a comes first, 0 if they are equal, and a positive number if b comes first.
 
 qsort() works on any type, so it passes generic pointers (const void *). Inside my function I cast them to char ** (each array element is a char *), get the strings, and return strcmp(x, y). The const means the function must not change the data.
+
+## Feature 6: ls-v1.5.0 (Colorized Output)
+
+### Q1. How do ANSI escape codes make color? Code for green text?
+
+The terminal treats the special sequence that starts with the ESC character (\033) as a command, not text. "\033[0;32m" turns on green text. Everything printed after it is green until "\033[0m" resets the color.
+
+Green example: printf("\033[0;32m%s\033[0m", name);
+
+### Q2. Which st_mode bits show that a file is executable?
+
+There are three execute bits: S_IXUSR (owner), S_IXGRP (group) and S_IXOTH (others). I check them with:
+
+if (mode & (S_IXUSR | S_IXGRP | S_IXOTH))
+
+If any one of them is set, the file is executable by someone, so I print it in green.
